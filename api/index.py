@@ -1,153 +1,106 @@
 import os
 import json
-from typing import List
-from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
-from pydantic import BaseModel
-from dotenv import load_dotenv
+import asyncio
+import logging
+import uuid
 from fastapi import FastAPI, Query
 from fastapi.responses import StreamingResponse
-from openai import OpenAI
-from .utils.prompt import ClientMessage, convert_to_openai_messages
-from .utils.tools import get_current_weather
+from pydantic import BaseModel
+from dotenv import load_dotenv
 
+from agents import Agent, Runner, TResponseInputItem, ItemHelpers, trace, GuardrailFunctionOutput, InputGuardrail, WebSearchTool, RunItemStreamEvent
+from tools.cinema_schedule_tools import cinema_schedule_tool
+from tools.send_note_tools import send_note
 
 load_dotenv(".env.local")
 
+logging.basicConfig(level=logging.INFO)
+
 app = FastAPI()
 
-client = OpenAI(
-    api_key=os.environ.get("OPENAI_API_KEY"),
+class Request(BaseModel):
+    messages: list[TResponseInputItem]
+
+class MovieOutput(BaseModel):
+    reasoning: str
+    related_to_movies: bool
+
+cinema_schedule_agent = Agent(
+    name="Cinema Schedule Agent",
+    handoff_description="A specialist that knows cinema schedules and can recommend movies.",
+    instructions="You should be able to tell the user the schedule of a movie. You can recommend movies. Today is 13042025. The price from cinema_schedule_tool 15000 means 150 UAH 00 kop.",
+    tools=[cinema_schedule_tool]
 )
 
+notes_agent = Agent(
+    name="Notes Agent",
+    instructions="You can take notes of the conversation and send them to the user in Telegram",
+    handoff_description="A specialist that can take notes of the conversation and send them to the user in Telegram.",
+    tools=[send_note]
+)
 
-class Request(BaseModel):
-    messages: List[ClientMessage]
+guardrails_agent = Agent(
+    name="Guardrails Agent",
+    instructions="User's questions should relate to movies. Greetings are OK. NO homework questions.",
+    output_type=MovieOutput,
+)
 
-
-available_tools = {
-    "get_current_weather": get_current_weather,
-}
-
-def do_stream(messages: List[ChatCompletionMessageParam]):
-    stream = client.chat.completions.create(
-        messages=messages,
-        model="gpt-4o",
-        stream=True,
-        tools=[{
-            "type": "function",
-            "function": {
-                "name": "get_current_weather",
-                "description": "Get the current weather at a location",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "latitude": {
-                            "type": "number",
-                            "description": "The latitude of the location",
-                        },
-                        "longitude": {
-                            "type": "number",
-                            "description": "The longitude of the location",
-                        },
-                    },
-                    "required": ["latitude", "longitude"],
-                },
-            },
-        }]
+async def movie_guardrail(ctx, agent, input_data):
+    result = await Runner.run(guardrails_agent, input_data, context=ctx.context)
+    final_output = result.final_output_as(MovieOutput)
+    return GuardrailFunctionOutput(
+        output_info=final_output,
+        tripwire_triggered=not final_output.related_to_movies
     )
 
-    return stream
+web_search_agent = Agent(
+    name="Web Search Agent",
+    handoff_description="A specialist that can search the web for reviews for movies. Trigger this agent when user asks for reviews for movies.",
+    instructions="You can search the web for reviews for movies. Let the user know what is the rating for the given movie. Was it critically acclaimed etc.",
+    tools=[WebSearchTool(search_context_size="high")]
+)
 
-def stream_text(messages: List[ChatCompletionMessageParam], protocol: str = 'data'):
-    draft_tool_calls = []
-    draft_tool_calls_index = -1
+triage_agent = Agent(
+    name="Triage Agent",
+    instructions="You are a specialist that delegates tasks to other agents.",
+    handoffs=[cinema_schedule_agent, notes_agent, web_search_agent],
+    input_guardrails=[InputGuardrail(guardrail_function=movie_guardrail)]
+)
 
-    stream = client.chat.completions.create(
-        messages=messages,
-        model="gpt-4o",
-        stream=True,
-        tools=[{
-            "type": "function",
-            "function": {
-                "name": "get_current_weather",
-                "description": "Get the current weather at a location",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "latitude": {
-                            "type": "number",
-                            "description": "The latitude of the location",
-                        },
-                        "longitude": {
-                            "type": "number",
-                            "description": "The longitude of the location",
-                        },
-                    },
-                    "required": ["latitude", "longitude"],
-                },
-            },
-        }]
-    )
-
-    for chunk in stream:
-        for choice in chunk.choices:
-            if choice.finish_reason == "stop":
+async def stream_agent_events(input_text: str):
+    thread_id = uuid.uuid4().hex
+    try:
+        result_stream = Runner.run_streamed(triage_agent, input=input_text)
+        message_output_created = False
+        async for event in result_stream.stream_events():
+            if isinstance(event, RunItemStreamEvent):
+                logging.info(f"name of event: {event.name}")
+                if event.name == 'tool_output':
+                    message_output_created = True
+            if not message_output_created:
                 continue
-
-            elif choice.finish_reason == "tool_calls":
-                for tool_call in draft_tool_calls:
-                    yield '9:{{"toolCallId":"{id}","toolName":"{name}","args":{args}}}\n'.format(
-                        id=tool_call["id"],
-                        name=tool_call["name"],
-                        args=tool_call["arguments"])
-
-                for tool_call in draft_tool_calls:
-                    tool_result = available_tools[tool_call["name"]](
-                        **json.loads(tool_call["arguments"]))
-
-                    yield 'a:{{"toolCallId":"{id}","toolName":"{name}","args":{args},"result":{result}}}\n'.format(
-                        id=tool_call["id"],
-                        name=tool_call["name"],
-                        args=tool_call["arguments"],
-                        result=json.dumps(tool_result))
-
-            elif choice.delta.tool_calls:
-                for tool_call in choice.delta.tool_calls:
-                    id = tool_call.id
-                    name = tool_call.function.name
-                    arguments = tool_call.function.arguments
-
-                    if (id is not None):
-                        draft_tool_calls_index += 1
-                        draft_tool_calls.append(
-                            {"id": id, "name": name, "arguments": ""})
-
-                    else:
-                        draft_tool_calls[draft_tool_calls_index]["arguments"] += arguments
-
-            else:
-                yield '0:{text}\n'.format(text=json.dumps(choice.delta.content))
-
-        if chunk.choices == []:
-            usage = chunk.usage
-            prompt_tokens = usage.prompt_tokens
-            completion_tokens = usage.completion_tokens
-
-            yield 'e:{{"finishReason":"{reason}","usage":{{"promptTokens":{prompt},"completionTokens":{completion}}},"isContinued":false}}\n'.format(
-                reason="tool-calls" if len(
-                    draft_tool_calls) > 0 else "stop",
-                prompt=prompt_tokens,
-                completion=completion_tokens
-            )
-
-
-
+            if event.type == "raw_response_event":
+                try:
+                    delta_text = event.data.delta
+                    logging.info(f"raw delta token: {delta_text}")
+                except AttributeError:
+                    delta_text = None
+                if delta_text:
+                    logging.info(f"Delta token: {delta_text}")
+                    yield f'0:{json.dumps(delta_text)}\n'
+    except Exception as e:
+         logging.error(f"Exception in stream_agent_events: {e}")
+         yield '0:"... I\'m sorry, I cannot answer this question. Would you like me to help you with picking a movie to watch? 🍿"'
 
 @app.post("/api/chat")
 async def handle_chat_data(request: Request, protocol: str = Query('data')):
-    messages = request.messages
-    openai_messages = convert_to_openai_messages(messages)
+    try: 
+        response = StreamingResponse(stream_agent_events(request.messages))
+        response.headers['x-vercel-ai-data-stream'] = 'v1'
+        return response
+    except:
+        return StreamingResponse(iter([f'0:"I\'m sorry, I cannot answer this question. Would you like me to help you with picking a movie to watch? 🍿"']), media_type="text/event-stream")
 
-    response = StreamingResponse(stream_text(openai_messages, protocol))
-    response.headers['x-vercel-ai-data-stream'] = 'v1'
-    return response
+if __name__ == '__main__':
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
