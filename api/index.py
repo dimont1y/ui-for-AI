@@ -28,7 +28,7 @@ class MovieOutput(BaseModel):
 cinema_schedule_agent = Agent(
     name="Cinema Schedule Agent",
     handoff_description="A specialist that knows cinema schedules and can recommend movies.",
-    instructions="You should be able to tell the user the schedule of a movie. You can recommend movies. Today is 13042025. The price from cinema_schedule_tool 15000 means 150 UAH 00 kop.",
+    instructions="You should be able to tell the user the schedule of a movie. You can recommend movies. Today is 15042025. The price from cinema_schedule_tool 15000 means 150 UAH 00 kop.",
     tools=[cinema_schedule_tool]
 )
 
@@ -93,7 +93,7 @@ async def stream_agent_events(input_text: str):
          yield '0:"... I\'m sorry, I cannot answer this question. Would you like me to help you with picking a movie to watch? 🍿"'
 
 @app.post("/api/chat")
-async def handle_chat_data(request: Request, protocol: str = Query('data')):
+async def handle_chat_data(request: Request):
     try: 
         response = StreamingResponse(stream_agent_events(request.messages))
         response.headers['x-vercel-ai-data-stream'] = 'v1'
