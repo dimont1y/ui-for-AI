@@ -9,13 +9,9 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 from agents import Agent, Runner, TResponseInputItem, ItemHelpers, trace, GuardrailFunctionOutput, InputGuardrail, WebSearchTool, RunItemStreamEvent
-<<<<<<< HEAD
+
 from api_client.coinmarketcap_api_tool import get_crypto_data, compare_crypto_data, get_historical_data
 from api_client.get_token_inf_from_contract import explore_token
-=======
-from tools.cinema_schedule_tools import cinema_schedule_tool
-from tools.send_note_tools import send_note
->>>>>>> 424bd9be25460f29ae19e56e3692323734973887
 
 load_dotenv(".env.local")
 
@@ -25,12 +21,6 @@ app = FastAPI()
 
 class Request(BaseModel):
     messages: list[TResponseInputItem]
-
-class MovieOutput(BaseModel):
-    reasoning: str
-    related_to_movies: bool
-
-<<<<<<< HEAD
 
 class CryptoOutput(BaseModel):
     reasoning: str
@@ -98,49 +88,8 @@ triage_agent = Agent(
     instructions="You are a specialist that greets the user and delegates tasks to other agents based on the user's question. ",
     handoffs=[crypto_assistant_agent, web_search_agent, analytics_agent, historical_data_agent, token_explorer_agent],
     input_guardrails=[InputGuardrail(guardrail_function=crypto_guardrail)]
-=======
-cinema_schedule_agent = Agent(
-    name="Cinema Schedule Agent",
-    handoff_description="A specialist that knows cinema schedules and can recommend movies.",
-    instructions="You should be able to tell the user the schedule of a movie. You can recommend movies. Today is 15042025. The price from cinema_schedule_tool 15000 means 150 UAH 00 kop.",
-    tools=[cinema_schedule_tool]
 )
 
-notes_agent = Agent(
-    name="Notes Agent",
-    instructions="You can take notes of the conversation and send them to the user in Telegram",
-    handoff_description="A specialist that can take notes of the conversation and send them to the user in Telegram.",
-    tools=[send_note]
-)
-
-guardrails_agent = Agent(
-    name="Guardrails Agent",
-    instructions="User's questions should relate to movies. Greetings are OK. NO homework questions.",
-    output_type=MovieOutput,
-)
-
-async def movie_guardrail(ctx, agent, input_data):
-    result = await Runner.run(guardrails_agent, input_data, context=ctx.context)
-    final_output = result.final_output_as(MovieOutput)
-    return GuardrailFunctionOutput(
-        output_info=final_output,
-        tripwire_triggered=not final_output.related_to_movies
-    )
-
-web_search_agent = Agent(
-    name="Web Search Agent",
-    handoff_description="A specialist that can search the web for reviews for movies. Trigger this agent when user asks for reviews for movies.",
-    instructions="You can search the web for reviews for movies. Let the user know what is the rating for the given movie. Was it critically acclaimed etc.",
-    tools=[WebSearchTool(search_context_size="high")]
-)
-
-triage_agent = Agent(
-    name="Triage Agent",
-    instructions="You are a specialist that delegates tasks to other agents.",
-    handoffs=[cinema_schedule_agent, notes_agent, web_search_agent],
-    input_guardrails=[InputGuardrail(guardrail_function=movie_guardrail)]
->>>>>>> 424bd9be25460f29ae19e56e3692323734973887
-)
 
 async def stream_agent_events(input_text: str):
     thread_id = uuid.uuid4().hex
@@ -165,11 +114,7 @@ async def stream_agent_events(input_text: str):
                     yield f'0:{json.dumps(delta_text)}\n'
     except Exception as e:
          logging.error(f"Exception in stream_agent_events: {e}")
-<<<<<<< HEAD
          yield '0:"...Sorry, can\'t help with that request!"'
-=======
-         yield '0:"... I\'m sorry, I cannot answer this question. Would you like me to help you with picking a movie to watch? 🍿"'
->>>>>>> 424bd9be25460f29ae19e56e3692323734973887
 
 @app.post("/api/chat")
 async def handle_chat_data(request: Request):
@@ -178,11 +123,8 @@ async def handle_chat_data(request: Request):
         response.headers['x-vercel-ai-data-stream'] = 'v1'
         return response
     except:
-<<<<<<< HEAD
         return StreamingResponse(iter([f'0:"...Sorry, can\'t help with that request!"']), media_type="text/event-stream")
-=======
-        return StreamingResponse(iter([f'0:"I\'m sorry, I cannot answer this question. Would you like me to help you with picking a movie to watch? 🍿"']), media_type="text/event-stream")
->>>>>>> 424bd9be25460f29ae19e56e3692323734973887
+
 
 if __name__ == '__main__':
     import uvicorn
