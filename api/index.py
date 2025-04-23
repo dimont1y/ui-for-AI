@@ -91,10 +91,11 @@ triage_agent = Agent(
 )
 
 
-async def stream_agent_events(input_text: str):
+async def stream_agent_events(messages: list[TResponseInputItem]):
     thread_id = uuid.uuid4().hex
+    yield '0:"Thinking..."\n'
     try:
-        result_stream = Runner.run_streamed(triage_agent, input=input_text)
+        result_stream = Runner.run_streamed(triage_agent, input=messages)
         message_output_created = False
         async for event in result_stream.stream_events():
             if isinstance(event, RunItemStreamEvent):
@@ -114,16 +115,20 @@ async def stream_agent_events(input_text: str):
                     yield f'0:{json.dumps(delta_text)}\n'
     except Exception as e:
          logging.error(f"Exception in stream_agent_events: {e}")
-         yield '0:"...Sorry, can\'t help with that request!"'
+         yield f'0:{json.dumps("Error: " + str(e))}\n'
 
 @app.post("/api/chat")
 async def handle_chat_data(request: Request):
-    try: 
-        response = StreamingResponse(stream_agent_events(request.messages))
+    try:
+        response = StreamingResponse(stream_agent_events(request.messages), media_type="text/event-stream")
         response.headers['x-vercel-ai-data-stream'] = 'v1'
         return response
-    except:
-        return StreamingResponse(iter([f'0:"...Sorry, can\'t help with that request!"']), media_type="text/event-stream")
+    except Exception as e:
+        return StreamingResponse(
+            iter([f'0:{json.dumps(f"Error: {str(e)}")}\n']),
+            media_type="text/event-stream"
+        )
+
 
 
 if __name__ == '__main__':
