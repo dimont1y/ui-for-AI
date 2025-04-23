@@ -1,6 +1,7 @@
 import requests
 
 from apis.config import COINMARKETCAP_API_KEY
+
 from agents import function_tool
 
 BASE_URL = 'https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest'
@@ -33,7 +34,6 @@ def get_crypto_data(symbol:str):
 
     except requests.exceptions.RequestException as e:
         return {'error': f'Помилка запиту: {str(e)}'}
-
 
 @function_tool
 def compare_crypto_data(symbol1: str, symbol2: str):

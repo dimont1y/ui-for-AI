@@ -3,6 +3,7 @@ import json
 import asyncio
 import logging
 import uuid
+
 from fastapi import FastAPI, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -28,12 +29,12 @@ class CryptoOutput(BaseModel):
 
 
 guardrails_agent = Agent(
-name="Guardrails Agent",
-instructions="User's questions should relate to crypto."
-    "Greetings are OK. NO homework questions. "
-    "Answer with `is_about_crypto=True` if the query is about cryptocurrencies. "
-    "Otherwise, set `is_about_crypto=False`.",
-output_type=CryptoOutput
+    name="Guardrails Agent",
+    instructions="User's questions should relate to crypto."
+        "Greetings are OK. NO homework questions. "
+        "Answer with `is_about_crypto=True` if the query is about cryptocurrencies. "
+        "Otherwise, set `is_about_crypto=False`.",
+    output_type=CryptoOutput
 )
 
 async def crypto_guardrail(ctx, agent, input_data):
@@ -128,8 +129,6 @@ async def handle_chat_data(request: Request):
             iter([f'0:{json.dumps(f"Error: {str(e)}")}\n']),
             media_type="text/event-stream"
         )
-
-
 
 if __name__ == '__main__':
     import uvicorn
